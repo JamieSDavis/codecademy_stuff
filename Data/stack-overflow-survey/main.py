@@ -1,6 +1,10 @@
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+from sklearn.model_selection import train_test_split
 
 df = pd.read_csv('developer_dataset.csv')
 
@@ -85,16 +89,87 @@ Now we will investigate developer undergraduate majors. We've seen that we are m
 To understand how and why, we will look at the distribution of majors over each year
 '''
 
-respondent_count_undergrad = df[['RespondentID', 'UndergradMajor']].groupby('UndergradMajor').count().reset_index()
-respondent_count_undergrad.columns = ['UndergradMajor', 'RespondentCount']
+respondent_count_undergrad = df[['RespondentID', 'Year']].groupby('Year').count().reset_index()
+respondent_count_undergrad.columns = ['Year', 'RespondentCount']
 
-'''missing_undergrad = df['UndergradMajor'].isnull().groupby(df['Year']).sum().reset_index()
+missing_undergrad = df['UndergradMajor'].isnull().groupby(df['Year']).sum().reset_index()
 
-merged_df = pd.merge(respondent_count_undergrad, missing_undergrad, on='UndergradMajor', how='inner')
+merged_df = pd.merge(respondent_count_undergrad, missing_undergrad, on='Year', how='inner')
 merged_df['UnderGradMissingPct'] = (merged_df['UndergradMajor'] / merged_df['RespondentCount']) * 100
 
-print(merged_df)'''
+print(merged_df)
 
 sns.catplot(x='Year', y='UndergradMajor', data=missing_undergrad, kind='bar', height=4, aspect=1, palette='husl')
 plt.show()
 plt.clf()
+
+'''
+All of the data for 2020 undergrad majors is filled in, indicating that each participant in these surveys had some level of decision for their undergrad major. 
+For the purposes of our analysis, we are most interested in what major a person ultimately landed on, as this would be the educational background they would carry into a job search. 
+We want to carry that value backwards for each participant to fill in any missing data, using the Single Imputation techniques of NOCB.
+'''
+
+df = df.sort_values(['RespondentID', 'Year']) # Sort by ID and Year so that each person's data is carried backwards correctly
+df['UndergradMajor'].bfill(axis=0, inplace=True)
+
+'''
+From here, we will set up a major distribution for each year:
+'''
+
+majors = ['social science','natural science','computer science','development','another engineering','never declared'] # Key major groups outlined in the Stack Overflow survey
+
+edu_df = df[['Year', 'UndergradMajor']]
+
+edu_df.dropna(how='any', inplace=True)
+
+edu_df.loc[edu_df['UndergradMajor'].str.contains('(?i)social science'), 'SocialScience'] = True
+edu_df.loc[edu_df['UndergradMajor'].str.contains('(?i)natural science'), 'NaturalScience'] = True
+edu_df.loc[edu_df['UndergradMajor'].str.contains('(?i)computer science'), 'ComSci'] = True
+edu_df.loc[edu_df['UndergradMajor'].str.contains('(?i)development'), 'ComSci'] = True
+edu_df.loc[edu_df['UndergradMajor'].str.contains('(?i)another engineering'), 'OtherEng'] = True
+edu_df.loc[edu_df['UndergradMajor'].str.contains('(?i)never declared'), 'NoMajor'] = True
+
+edu_df = edu_df.melt(id_vars=['Year'], value_vars=['SocialScience','NaturalScience','ComSci','OtherEng','NoMajor'],var_name='EduCat', value_name='EduFlag')
+
+edu_df.dropna(how='any', inplace=True)
+edu_df = edu_df.groupby(['Year','EduCat']).count().reset_index()
+
+edu_fig = sns.catplot(x="Year", y='EduFlag', col="EduCat", data=edu_df, kind="bar", height=6, aspect=1.5, palette='husl');
+plt.show()
+plt.clf()
+
+'''
+At this point, we have studied the demographics of developers around the world, from where they live to the education paths they have taken. 
+Now, let us turn our focus to the various aspects that would influence the job-hunting process.
+Years of experience are an important metric when looking to understand the general skill and technical capabilities of a potential candidate. 
+Compensation is also important to understand what the “going rate” for a particular developer is in today’s market. 
+We might assume that there is a strong correlation between experience and job compensation, and we will explore this hypotesis. '''
+
+comp_fields = df[['Year','YearsCodePro','ConvertedComp']]
+
+d = sns.boxplot(x='Year', y='YearsCodePro', data=comp_fields, palette='husl')
+e = sns.boxplot(x='Year', y='ConvertedComp', data=comp_fields, palette='husl')
+
+plt.show()
+plt.clf()
+
+'''
+Although there are some outlier data points for each column, the overall distribution is fairly consistent year-over-year. 
+This indicates that there is a strong correlation between the data points, which should tell a good story about how experience can translate into compensation. 
+Since there is a clear trend with the data points, the best method for filling in the missing data for these two columns is through Multiple Imputation.
+'''
+
+impute_df = df[['YearsCodePro','ConvertedComp']]
+train_df, test_df = train_test_split(impute_df, train_size=0.1)
+
+imp = IterativeImputer(max_iter=20, random_state=0)
+comp_df = pd.DataFrame(np.round(imp.fit_transform(impute_df), 0), columns=['YearsCodePro','ConvertedComp'])
+
+comp_plot_df = comp_df.loc[comp_df['ConvertedComp'] <= 150000]
+comp_plot_df['CodeYearBins'] = pd.qcut(comp_plot_df['YearsCodePro'], q=5)
+
+sns.boxplot(x='CodeYearBins', y='ConvertedComp', data=comp_plot_df, palette='husl')
+
+plt.show()
+plt.clf()
+
